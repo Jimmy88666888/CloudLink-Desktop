@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name              CloudLink Desktop
 // @namespace         github.com/Jimmy88666888/CloudLink-Desktop
-// @version           1.0.0
-// @description       国际网盘电脑直链助手：Google Drive / OneDrive / Dropbox。支持复制直链、IDM(.ef2)、MDM 批量、Aria2 RPC、curl/aria2c。
-// @description:zh-CN 国际网盘电脑直链助手：Google Drive / OneDrive / Dropbox。支持复制直链、IDM(.ef2)、MDM 批量、Aria2 RPC、curl/aria2c。
+// @version           1.0.1
+// @description       国际网盘电脑直链助手：Google Drive / OneDrive / Dropbox。支持复制直链、IDM(.ef2)、Mister Download Manager(MDM)、Aria2 RPC、curl/aria2c。
+// @description:zh-CN 国际网盘电脑直链助手：Google Drive / OneDrive / Dropbox。支持复制直链、IDM(.ef2)、Mister Download Manager(MDM)、Aria2 RPC、curl/aria2c。
 // @author            CloudLink Desktop
 // @license           MIT
 // @match             *://drive.google.com/*
@@ -119,18 +119,28 @@
   }
 
   /**
-   * MDM 批量格式：一行一个任务
-   * url | filename | referer
-   * 兼容多数支持「批量导入 URL」的下载器（含部分 MDM/NDM/自由导入工具）
+   * Mister Download Manager (MDM)
+   * - 官方支持：任务 → 导入 → 从 IDM 导出文件（.ef2，含 referer）
+   * - 剪贴板批量：任务 → 从剪贴板批量添加下载 (Ctrl+B)，识别 http(s) 与 <url>
+   * - 文本导入：任务 → 导入 → 从文本文件（一行一个 URL）
+   * 这里同时提供：纯 URL 列表（Ctrl+B / 文本导入）以及带文件名的 Markdown 列表
    */
-  function toMDMBatch(items) {
+  function toMDMUrlList(items) {
+    return items.map((it) => it.url).join("\n");
+  }
+
+  function toMDMMarkdown(items) {
     return items
       .map((it) => {
-        const name = (it.name || "").replace(/\|/g, "_");
-        const ref = it.referer || location.origin + "/";
-        return `${it.url} | ${name} | ${ref}`;
+        const name = (it.name || "file").replace(/[\[\]]/g, "");
+        return `[${name}](${it.url})`;
       })
       .join("\n");
+  }
+
+  function toMDMAngle(items) {
+    // MDM 也识别尖括号中的地址
+    return items.map((it) => `<${it.url}>`).join("\n");
   }
 
   function toAria2cLines(items) {
@@ -282,8 +292,9 @@
       </div>
       <div class="tools">
         <button type="button" data-act="copy-all">复制全部直链</button>
-        <button type="button" class="s2" data-act="idm">导出 IDM (.ef2)</button>
-        <button type="button" class="s3" data-act="mdm">导出 MDM 批量</button>
+        <button type="button" class="s2" data-act="idm">导出 IDM/MDM (.ef2)</button>
+        <button type="button" class="s3" data-act="mdm">复制给 MDM (Ctrl+B)</button>
+        <button type="button" class="s3" data-act="mdm-txt">导出 MDM 文本</button>
         <button type="button" class="s4" data-act="aria2">推送 Aria2</button>
         <button type="button" class="s5" data-act="aria2c">复制 aria2c</button>
         <button type="button" class="s5" data-act="curl">复制 curl</button>
@@ -300,8 +311,11 @@
           <button type="button" id="cld-save-set" style="border:none;border-radius:8px;padding:8px 12px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer">保存设置</button>
         </div>
         <p style="color:#9ca3af;margin:10px 0 0;font-size:12px">
-          IDM：导出 .ef2 后在 IDM → 任务 → 导入 → 从 EF2 文件导入。<br/>
-          MDM：导出「url | 文件名 | referer」文本，可导入支持批量 URL 的下载器。
+          <b>IDM</b>：导出 .ef2 → 任务 → 导入 → 从 EF2 文件导入。<br/>
+          <b>Mister Download Manager (MDM)</b>：<br/>
+          · 推荐：同一 .ef2 → 任务 → 导入 → 从 IDM 导出文件（带 referer）<br/>
+          · 或点「复制给 MDM」后在 MDM 按 <b>Ctrl+B</b>（从剪贴板批量添加）<br/>
+          · 或「导出 MDM 文本」→ 任务 → 导入 → 从文本文件
         </p>
       </div>
     `;
@@ -337,11 +351,23 @@
       const act = btn.getAttribute("data-act");
       if (!currentItems.length) return toast("没有可处理的链接");
       if (act === "copy-all") copyText(currentItems.map((x) => x.url).join("\n"));
+      // IDM 与 MDM 共用 .ef2（MDM 官方支持导入 IDM 导出文件）
       if (act === "idm") downloadTextFile("cloudlink-idm.ef2", toIDMEf2(currentItems));
+      // Mister Download Manager：复制 URL 列表，用户在 MDM 中 Ctrl+B
       if (act === "mdm") {
-        const text = toMDMBatch(currentItems);
-        copyText(text);
-        downloadTextFile("cloudlink-mdm.txt", text);
+        copyText(toMDMUrlList(currentItems));
+        toast("已复制 URL 列表，请在 MDM 中按 Ctrl+B");
+      }
+      // 导出纯文本 / Markdown，便于 MDM「导入 → 从文本文件」
+      if (act === "mdm-txt") {
+        const body =
+          toMDMUrlList(currentItems) +
+          "\n\n# markdown\n" +
+          toMDMMarkdown(currentItems) +
+          "\n\n# angle-brackets\n" +
+          toMDMAngle(currentItems);
+        downloadTextFile("cloudlink-mdm.txt", body);
+        copyText(toMDMUrlList(currentItems));
       }
       if (act === "aria2") pushAria2(currentItems);
       if (act === "aria2c") copyText(toAria2cLines(currentItems));
